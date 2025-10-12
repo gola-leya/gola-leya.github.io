@@ -98,7 +98,7 @@ theme_mode: # [light | dark]
 cdn:
 
 # the avatar on sidebar, support local or CORS resources
-avatar: \Users\22295\OneDrive\图片\微信图片_2025-10-12_192625_564.jpg
+avatar: assets/微信图片_2025-10-12_192625_564.jpg
 
 # The URL of the site-wide social preview image used in SEO `og:image` meta tag.
 # It can be overridden by a customized `page.image` in front matter.
