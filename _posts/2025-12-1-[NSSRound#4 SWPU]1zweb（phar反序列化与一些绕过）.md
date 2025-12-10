@@ -1,4 +1,4 @@
-# [NSSRound#4 SWPU]1zweb（phar反序列化与一些绕过）
+
 
 ![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed@main/20251201153759.png)
 
@@ -146,3 +146,4 @@ print(f"文件已压缩为：{compressed_file}")
 payload：phar://./upload/1.png/a.phar
 
 得到flag
+
