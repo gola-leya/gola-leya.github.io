@@ -1,4 +1,4 @@
-# [NISACTF 2022]join-us（绕database，无列名注入）
+
 
 拿到题目，sql注入的漏洞点很好找
 
@@ -71,3 +71,4 @@ using表示使用什么字段进行连接，用using指定了连接字段则查�
 ![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed@main/20251210195911.png)
 
 参考：https://www.cnblogs.com/q1stop/p/18024992
+
