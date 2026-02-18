@@ -75,4 +75,5 @@ find / -group bugtracker 2>/dev/null
 
 这里能直接获取root.txt文件，payload:  ../root.txt
 
+
 但是如果要得到最高权限要通过 **使用PATH劫持提权** 的方法，这里就不接着说了。
