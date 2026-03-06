@@ -1,4 +1,4 @@
-# htb Oopsie 渗透笔记
+
 
 核心思路：扫描端口-->IDOR拿到admin信息-->修改cookie-->文件上传配合反弹shell-->找到数据库配置文件-->连接ssh-->提权
 
@@ -77,4 +77,5 @@ find / -group bugtracker 2>/dev/null
 
 
 但是如果要得到最高权限要通过 **使用PATH劫持提权** 的方法，这里就不接着说了。
+
 
