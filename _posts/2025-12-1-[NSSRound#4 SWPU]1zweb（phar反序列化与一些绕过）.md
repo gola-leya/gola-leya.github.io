@@ -1,4 +1,6 @@
-
+---
+categories: [CTF]
+---
 
 ![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed@main/20251201153759.png)
 
