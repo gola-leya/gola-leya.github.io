@@ -1,0 +1,144 @@
+# 浅谈CSRF
+
+### CSRF **跨站请求伪造**
+
+一句话就是  攻击者通过某种方式让你的浏览器自动向目标网站发请求
+
+典型案例
+
+> 攻击者建了一个恶意网站，放上钓鱼信息诱导你点击，点击后通过浏览器的`自动cookie发送机制`，带着cookie像某个目标网站发送请求，可以是转账，修改密码等等。
+
+<br>
+
+### 相关原理:
+
+#### 1.同源策略（same-origin policy）
+
+它是浏览器的一种安全机制，核心作用是：
+
+> 防止一个网站的 JavaScript 随便读取另一个网站的数据。
+
+但是重点是它是步完全限制所有请求的，
+
+**它主要限制”读取相应内容“，并不完全限制发送请求**
+
+所以只要服务器能接受请求并执行，那么csrf就有可能成立
+
+<br>
+
+#### 2.自动 Cookie 发送机制
+
+我们知道cookie是服务器验证身份的一种”工具“
+
+浏览器保存 Cookie，之后访问这个源时，它会自动附带该域的所有 Cookie。
+
+这是csrf的最关键一点，攻击者不用拿到cookie，可以直接利用浏览器特性进行攻击
+
+<br>
+
+#### 3.CORS 是什么？
+
+跨源资源共享 Cross-Origin Resource Sharing
+
+它的作用是：
+
+> 服务器通过 HTTP 响应头告诉浏览器：哪些外部源可以读取我的资源
+
+**若服务器里cors白名单有evil.com这个网站，那么这个网站就不受同源策略的影响**
+
+但是同时：
+
+> CORS 里有“简单请求”的概念，**普通表单**的 `application/x-www-form-urlencoded`、`multipart/form-data`、`text/plain` 这类 POST 请求通常不需要先发预检
+
+<br>
+
+<br>
+
+### 接下来说说发送请求的不同方式
+
+#### 1.传统html发送get/post请求
+
+该请求方式不可以自定义请求头，但它不会经cors检测。
+
+其中表单post为常用的攻击手段
+
+```html
+<form action="https://target.com/upload" method="POST" enctype="multipart/form-data">
+  <input name="desc" value="test">
+</form>
+<script>
+  document.forms[0].submit();
+</script>
+```
+
+```html
+<form action="https://target.com/api/change" method="POST" enctype="text/plain"> //这里定义了content-type为text/plain
+  <input name='{"email":"attacker@example.com"}' value="">
+</form>
+<script>
+  document.forms[0].submit();
+</script>
+```
+
+<br>
+
+#### 2.fetch/xmlhttprequest
+
+可以自定义请求头，但一般会触发cors预检
+
+`fetch` 和表单不一样的一点是：跨源 `fetch` 默认不会随便带 Cookie；如果要带凭证，需要设置 `credentials`，而服务端还要配合 CORS 相关响应头，浏览器才会把响应暴露给前端代码。
+
+```js
+fetch("https://target.com/api/change-email", {
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "X-CSRF-Token": "xxx"
+  },
+  body: "email=attacker@example.com"
+});
+```
+
+XHR发请求除了语法不同，进行csrf时与fetch请求类似
+
+<br>
+
+<br>
+
+### 简单说说防御手段：
+
+根据csrf攻击原理自然能说出几个常见的防御手段
+
+#### 1.samesite设置哪些域会自动带cookie
+
+`SameSite` 的作用就是限制跨站请求是否携带 Cookie
+
+#### 2.cors检测来源
+
+#### 3.referer检测上一个来源
+
+#### 4.csrf token（重点讲讲这个）
+
+csrf token是专门用来防御csrf攻击的令牌。
+
+它一般**用一段html代码隐藏再网页源代码**中，如：
+
+```html
+<form action="/change-email" method="POST">
+  <input name="email">
+  <input type="hidden" name="csrf_token" value="random_abc123">
+</form>
+```
+
+由于同源策略，攻击者是无法读取到用户网页源代码里的csrf token。
+
+<br>
+
+**还有一种方式是添加指定http头**，由后端检测是否请求包中有这个独特的头
+
+例如：
+
+Cookie: sessionid=abc123; csrf_token=random123
+**X-CSRF-Token: random123**
+
+往往csrf想自定义请求头都会有一堆阻碍，加上这个token难以获取，所以这也是一种极其有效的方式
