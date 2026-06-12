@@ -1,0 +1,101 @@
+# 应急响应-apache日志分析打靶
+
+```
+tar -zcvf /tmp/ir_apache_backup/apache_logs_$(date +%F_%H%M%S).tar.gz \
+/var/log/apache2/access.log* \
+/var/log/apache2/error.log* \
+/var/log/apache2/other_vhosts_access.log* \
+2>/dev/null
+```
+
+依旧起手先打包
+
+然后本地kali下载
+
+```
+scp root@52.83.106.66:/tmp/ir_apache_backup/*.tar.gz .
+```
+
+<br>
+
+apache日志个别重要文件
+
+| 文件名         | 作用                   | 应急时主要看什么                                           | 常用命令             |
+| -------------- | ---------------------- | ---------------------------------------------------------- | -------------------- |
+| `access.log`   | 当前正在写入的访问日志 | 最新的 HTTP 请求、访问 IP、访问路径、状态码、User-Agent    | `tail -f access.log` |
+| `access.log.1` | 上一次轮转前的访问日志 | 题目里最常见，很多历史攻击请求在这里                       | `less access.log.1`  |
+| `error.log`    | 当前错误日志           | PHP 报错、Apache 报错、权限错误、文件不存在、WebShell 报错 | `tail error.log`     |
+| `error.log.1`  | 上一次轮转前的错误日志 | 历史报错、漏洞利用失败痕迹                                 |                      |
+
+<br>
+
+1、提交当天访问次数最多的IP，即黑客IP
+
+这里我直接cat看了，一眼看出192.168.200.2
+
+<br>
+
+2.黑客使用的浏览器指纹是什么，提交指纹的md5
+
+命令
+
+```
+grep "192.168.200.2" access.log* | awk -F'"' '{print $6}' | uniq -c
+```
+
+awk 按列取内容的工具 按列取内容的工具 按列取内容的工具
+
+默认是以空格分隔
+
+```
+-F'"'  指定以"分隔列数    
+```
+
+<br>
+
+3.查看包含index.php页面被访问的次数，提交次数
+
+```
+grep -h "index.php" access.log.1 | wc -l
+```
+
+或者
+
+```
+grep -c "index.php" access.log.1
+```
+
+<br>
+
+4.查恶意ip一共访问了几次
+
+```
+grep -c "192.168.200.2" access.log*
+```
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260612221918.png)
+
+5.查看2023年8月03日8时这一个小时内有多少IP访问，提交次数
+
+```
+grep "03/Aug/2023:08:" access.log* | awk '{print $1}' | sort | uniq | wc -l
+```
+
+分析下这个的思路：
+
+先匹配时间，但只输出第一列的数据，也就是ip，然后进行排序，去重，最后输出最终行数
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260612224051.png)
+
+```
+sort 默认
+uniq 去重  -c统计每个都出现了多少次
+```
+
+<br>
+
+到这里就结束了，这种应急基本没什么难度，主要是熟悉linux查用命令。
+
+一般多会用到grep，find，cat这些基础命令
+
+稍微进阶一点的就是awk，wc，sort这些操作具体数值的命令，使用起来参数较多，学习中还是要记一下用法的
