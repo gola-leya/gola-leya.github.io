@@ -1,0 +1,133 @@
+# 应急响应-Linux日志分析打靶
+
+首先还是先把关键文件dump下来，不然要扣金币
+
+```
+tar -zcvf /tmp/ir_log_backup/linux_logs_$(date +%F_%H%M%S).tar.gz
+```
+
+然后返回kali，执行
+
+```
+scp root@43.192.168.113:/tmp/ir_log_backup/linux_logs_2026-06-11_141105.tar.gz .
+```
+
+就能把文件下载到自己kali上离线分析了
+
+<br>
+
+
+
+|       日志文件        |                             说明                             |
+| :-------------------: | :----------------------------------------------------------: |
+|   **/var/log/cron**   |                 记录了系统定时任务相关的日志                 |
+|     /var/log/cups     |                      记录打印信息的日志                      |
+|    /var/log/dmesg     | 记录了系统在开机时内核自检的信息，也可以使用dmesg命令直接查看内核自检信息 |
+|    /var/log/mailog    |                         记录邮件信息                         |
+|   /var/log/message    | 记录系统重要信息的日志。这个日志文件中会记录Linux系统的绝大多数重要信息，如果系统出现问题时，首先要检查的就应该是这个日志文件 |
+|   **/var/log/btmp**   | 记录**错误登录日志**，这个文件是二进制文件，不能直接vi查看，而要**使用lastb命令查看** |
+| **/var/log/lastlog**  | 记录系统中**所有用户最后一次登录时间的日志**，这个文件是二进制文件，不能直接vi，而要**使用lastlog命令查看** |
+|   **/var/log/wtmp**   | 永久记录所有用户的登录、注销信息，同时记录系统的启动、重启、关机事件。同样这个文件也是一个二进制文件，不能直接vi，而**需要使用last命令来查看** |
+|   **/var/log/utmp**   | **记录当前已经登录的用户信息**，这个文件会随着用户的登录和注销不断变化，只记录当前登录用户的信息。同样这个文件不能直接vi，而要**使用w,who,users等命令来查询** |
+|  **/var/log/secure**  | **记录验证和授权方面的信息**，只要涉及账号和密码的程序都会记录，比如SSH登录，su切换用户，sudo授权，甚至添加用户和修改用户密码都会记录在这个日志文件中 |
+| **/var/log/auth.log** | **注明：这个有的Linux系统有，有的Linux系统没有，一般都是/var/log/secure文件来记录居多** |
+
+<br>
+
+<br>
+
+1.要求找出有多少IP在爆破主机ssh的root帐号
+
+这里有两个相关日志auth.log和auth.log.1
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260611223230.png)
+
+先看/var/log/auth.log
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260611222439.png)
+
+也可以直接使用命令
+
+```
+grep -a "root" auth.log auth.log.1 | awk '{print $(NF-3)}'
+```
+
+awk是一个命令行工具
+
+```
+-a    把文件当文本处理，避免“匹配到二进制文件”
+-h    多文件查询时不显示文件名
+root    精准匹配 root 
+$(NF-3)    取倒数第 4 列，通常就是 IP
+```
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260611224607.png)
+
+然后可以去数一下ip个数
+
+<br>
+
+2.找登入成功的IP
+
+```
+grep -a "Accepted" auth.log auth.log.1
+```
+
+图片的就不放了
+
+<br>
+
+3.攻击者爆破用的字典是什么？
+
+这个就要去看每条日志的爆破用户名了，然后整理起来就是个字典
+
+```text
+grep -a "Failed password" auth.log auth.log.1 |sed -n 's/.*for \(.*\) from.*/\1/p'|uniq -c | sort -nr
+```
+
+![](https://cdn.jsdelivr.net/gh/gola-leya/img-bed/img/20260611225110.png)
+
+```
+uniq 命令用于删除重复的行。
+-c 选项表示对每个唯一的行计数，即统计每个IP地址的出现次数。
+sort -nr:
+
+sort 命令再次用于排序。
+-n 选项表示按数值进行排序。
+-r 选项表示按降序排序。
+组合起来，即按出现次数从高到低排序。
+```
+
+<br>
+
+4.成功登入的ip爆破了多少次
+
+```
+grep -ah "Failed password for root" auth.log auth.log.1 | grep "192.168.200.2" | wc -l
+```
+
+> `wc -l` 是用来**统计行数**的。
+>
+> 拆开看：
+>
+> ```
+> wc
+> ```
+>
+> 是 **word count**，可以统计：
+>
+> ```
+> 行数、单词数、字节数
+> ```
+>
+> `-l` 是 line 的意思，只统计**多少行**。
+
+<br>
+
+5.找出攻击者创建的新用户
+
+```
+grep -ra "new user"  直接递归查找
+```
+
+![image-20260611225934034](C:\Users\22295\AppData\Roaming\Typora\typora-user-images\image-20260611225934034.png)
